@@ -1,9 +1,13 @@
 library(tidyverse)
 library(pipeR)
 library(gridExtra)
+library(RcppRoll)
+library(ggsignif)
 loadNamespace('cowplot')
 
-setwd("/Volumes/areca42TB2/gdc/somatic_maf/extract_raw_maf/somatic_conversion/")
+#setwd("/Volumes/areca42TB2/gdc/somatic_maf/extract_raw_maf/somatic_conversion/")
+setwd('~/Dropbox/work/somatic_gene_conversion/')
+
 write_df= function(x, path, delim='\t', na='NA', append=FALSE, col_names=!append, ...) {
   file = if (grepl('gz$', path)) {
     gzfile(path, ...)
@@ -113,6 +117,7 @@ recomb_GC=recombination_rate%>>%
         legend.text = element_text(size=18),
         legend.position = c(0.02,0.05),legend.justification = c(0,0))
 recomb_GC
+ggsave("~/Dropbox/work/somatic_gene_conversion/recomb_conv_rate_in_arm.pdf",recomb_GC,height = 6,width = 12)
 
 ################### patient with TSG trunc LOH by gene conversion and other #################
 CN_variance = read_tsv("by_patient_CN_variance.tsv")
@@ -233,9 +238,9 @@ k_GCrate=temp%>>%mutate(tsg_trunc_loh=ifelse(is.na(tsg_trunc_loh),0,1))%>>%
   theme(axis.ticks.x = element_blank(),legend.title = element_blank(),
         legend.position = c(0.5,1),legend.justification = c(1,1),
         legend.text = element_text(size=20),axis.title.x = element_text(family = "serif",size=32),
-        axis.title.y=element_text(size=24),axis.text=element_text(size=16,color="black"))
+        axis.title.y=element_text(size=22),axis.text=element_text(size=16,color="black"))
 k_GCrate
-ggsave("~/Dropbox/work/somatic_gene_conversion/CNandTSGGCvsOther_SCNlevel.pdf",k_GCrate,height = 8,width = 10)
+ggsave("~/Dropbox/work/somatic_gene_conversion/CNandTSGGCvsOther_SCNlevel.pdf",k_GCrate,height = 6,width = 8)
 
 #k(1,1) = 100-90% is significantly high proportion?  =>  X-squared test
 Xsq=temp%>>%mutate(tsg_trunc_loh=ifelse(is.na(tsg_trunc_loh),0,1))%>>%
@@ -253,6 +258,10 @@ prop.test(x=Xsq$ratio,n=Xsq$N,p=Xsq$expectation)
 
 
 #### gene conversion rate in TSG and nonTSG
+trunc_tbl=data.frame(variant_type=factor(c("Truncating"),levels=c("Truncating","Missense","Silent","inframe_indel")),
+                     role=factor(c("TSG  "),levels=c("TSG  ","non TSG")),ratio=0,g=1)
+misil_tbl=data.frame(variant_type=factor(c("Missense","Silent"),levels=c("Truncating","Missense","Silent","inframe_indel")),
+                     role=factor("TSG  ",levels=c("TSG  ","non TSG")),ratio=0,g=1)
 TSG_all_GCrate= all_maf %>>%
   filter(mutect_dcv_posi/mutect_mut_num > 0.1, mutect_dcv_posi/mutect_mut_num < 0.9) %>>%
   inner_join(sample_list%>>%filter(is.na(screening),purity>purity_cutoff)%>>%
@@ -260,6 +269,7 @@ TSG_all_GCrate= all_maf %>>%
   mutate(genotype=ifelse(ascat_major==2,"AA",ifelse(ascat_minor==1,"AB","A"))) %>>%filter(genotype=="AB")%>>%
   left_join(driver_gene%>>%filter(str_detect(role,"TSG"))%>>%mutate(role="TSG")) %>>%
   mutate(role=ifelse(is.na(role),"non TSG","TSG  "))%>>%
+  mutate(role=factor(role,levels=c("TSG  ","non TSG")))%>>%
   filter(impact=="MODERATE"|impact=="HIGH"|variant_classification=="Silent")%>>%
   mutate(variant_type=ifelse(impact=="HIGH","Truncating",ifelse(variant_type=="SNP",
                                                                 ifelse(variant_classification=="Silent","Silent","Missense"),"inframe_indel"))) %>>%
@@ -274,24 +284,22 @@ TSG_all_GCrate= all_maf %>>%
   filter((allele_num==2 & p>=0.999)|(allele_num==1),tVAF>tvaf_cutoff)%>>%
   count(genotype, role, variant_type,bef)%>>%mutate(ratio=n/bef)%>>%(?.)%>>%
   ggplot(aes(x=role,y=ratio,fill=role))+geom_bar(stat="identity")+facet_wrap(.~ variant_type,strip.position = "bottom")+
-  geom_signif(data=data.frame(variant_type=c("Truncating"),role="TSG  ",ratio=0,g=1),aes(group=g),
+  geom_signif(data=trunc_tbl,aes(group=g),
               xmin=1,xmax=2,y_position=0.027,annotations="**",textsize = 6)+
-  geom_signif(data=data.frame(variant_type=c("Missense","Silent"),role="TSG  ",ratio=0,g=1),aes(group=g),
+  geom_signif(data=misil_tbl,aes(group=g),
               xmin=1,xmax=2,y_position=0.012,annotations="NS",textsize = 6)+
-  #geom_signif(stat="identity",
-  #            data=data.frame(x=c(1,1,1),xend=c(2,2,2),y=c(0.028,0.018,0.018),yend=c(0.028,0.018,0.018),
-  #                            p=c("**","NS","NS"),variant_type=c("truncating","nonsynonymous","synonymous")),
-  #            aes(x=x,y=y,xend=xend,yend=yend,annotation=p),textsize=12,tip_length = 10)+
   theme_classic()+
   ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
   scale_y_continuous(limits = c(0,0.02999),expand = c(0,0))+
   theme(axis.title.x = element_blank(),axis.title.y=element_text(size=24),
-        legend.position = "top",legend.justification = "center",
+        legend.position = c(0.5,1),legend.justification = c(0.5,1),
+        legend.direction = "horizontal",
         legend.title = element_blank(),legend.text = element_text(size=20),
         axis.text.x = element_blank(),axis.text.y = element_text(size=18,color="black"),
         axis.ticks.x = element_blank(),strip.placement = "outside",
         strip.background = element_blank(),strip.text.x = element_text(size=20))
 TSG_all_GCrate
+ggsave("~/Dropbox/work/somatic_gene_conversion/CNandTSGGCvsOther_SCNlevel.pdf",TSG_all_GCrate,height = 6,width = 9)
 
 
 
