@@ -181,3 +181,87 @@ tibble(purity_cutoff=c(rep(0.6,3),rep(0.7,3),rep(0.8,3),tvaf_cutoff=rep(c(0.75,0
   mutate(ratio=purrr::map2(purity_cutoff,tvaf_cutoff,~confirm_length(.x,.y)))%>>%unnest()%>>%#(?.)%>>%
   tidyr::pivot_wider(names_from = "tvaf_cutoff",values_from = "length")%>>%
   write_df("~/Dropbox/work/somatic_gene_conversion/cutoff_table/link_analysis_mean_distance.tsv")
+
+
+#########################################################################################################
+#linkage anlysis
+# distance and having evidence
+binom_p=all_pass%>>%
+  inner_join(sample_list%>>%filter(purity>0.5,dcv_median95>dcv_sd95)%>>%dplyr::select(tumor_sample_id,screening,purity),
+             by=c("sample_id"="tumor_sample_id"))%>>%
+  mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
+  filter(tVAF>0.75) %>>%
+  mutate(binom_purity=ifelse(purity>0.99,0.99,purity))%>>%
+  mutate(binom_purity=ifelse(allele_num==1,binom_purity/(2-binom_purity),binom_purity))%>>%
+  mutate(p=pbinom(t_alt,t_depth,binom_purity*0.5))%>>%
+  dplyr::select(sample_id,chr,start,p)
+
+
+all_tbl = read_tsv("hetero_germ_linked_candidate.tsv")%>>%
+  left_join(binom_p)
+
+confirmed=all_tbl %>>%
+  filter(is.na(screening),mutect_dcv_posi/mutect_mut_num>0.1,mutect_dcv_posi/mutect_mut_num<0.9,
+         purity>0.7,tVAF>0.8,p>=0.999)%>>%
+  tidyr::separate(col=linked_state,into=c("ref-ref","ref-alt","alt-ref","alt-alt"),sep=":",convert=T)%>>%
+  filter(`alt-ref` + `alt-alt`>5)%>>% (?.%>>%count(sample_id,chr,start,ref,alt)%>>%count()) %>>%
+  #filter((`alt-ref` >(`alt-ref`+`alt-alt`)*0.1) & (`alt-alt` >(`alt-ref`+`alt-alt`)*0.1))%>>%
+  filter(`alt-ref` >1 & `alt-alt` >1)%>>%
+  (?.%>>%count(sample_id,chr,start,ref,alt)%>>%count())
+
+dbin=40
+confirmedornot=all_tbl %>>%
+  filter(is.na(screening),mutect_dcv_posi/mutect_mut_num>0.1,mutect_dcv_posi/mutect_mut_num<0.9,
+         purity>0.7,tVAF>0.8,p>=0.999)%>>%
+  tidyr::separate(col=linked_state,into=c("ref-ref","ref-alt","alt-ref","alt-alt"),sep=":",convert=T)%>>%
+  filter(`alt-ref`+`alt-alt`>5)%>>%
+  mutate(distcl=distance%/%dbin)%>%
+  mutate(distance_class=paste0(distcl*dbin+1,"-",distcl*dbin+dbin))%>>%
+  mutate(linked_convert=ifelse(`alt-ref` >0 & `alt-alt` >0, "confirmed","not confirmed"))
+confirm_permutation=function(data=confirmedornot){
+  times=0
+  focal= confirmedornot%>%
+    count(distcl,distance_class,linked_convert)%>>%ungroup()%>>%
+    group_by(distance_class)%>>%mutate(Proportion = n/sum(n))%>>%
+    filter(linked_convert=="confirmed")%>>%
+    {as.list(coef(lm(Proportion ~ distcl, data=.)))$distcl}
+  for(i in 1:10000){
+    if(i %% 1000 == 0){print(paste0("permutation ",i," times now"))}
+    lean = confirmedornot%>%
+      {mutate(.,linked_convert=sample(.$linked_convert,length(.$linked_convert)))}%>%
+      count(distcl,distance_class,linked_convert)%>>%ungroup()%>>%
+      group_by(distance_class)%>>%mutate(Proportion = n/sum(n))%>>%
+      filter(linked_convert=="confirmed")%>>%
+      {as.list(coef(lm(Proportion ~ distcl, data=.)))$distcl}
+    if(lean > focal){times=times+1}
+  }
+  return(times/10000)
+}
+confirm_permutation()
+
+
+confirmedornot %>>%
+  count(distcl,distance_class,linked_convert)%>>%ungroup()%>>%
+  group_by(distance_class)%>>%mutate(Proportion = n/sum(n))%>>%
+  filter(linked_convert=="confirmed")%>>%(?.)%>>%
+  ggplot(aes(x=reorder(distance_class,distcl),y=Proportion,fill=linked_convert))+
+  geom_bar(color="black",stat = "identity",width = 0.8)+
+  geom_smooth(mapping = aes(x = distcl+1, y = Proportion),method = "lm",se=F, color="black")+
+  scale_y_continuous(breaks = c(0,0.2,0.4,0.6,0.8,1.0),limits = c(0,1.05),expand = c(0,0))+
+  scale_fill_manual(values=c("red"))+
+  guides(fill=F)+
+  xlab("Distance")+
+  geom_text(aes(x=1.5,y=0.9,label="p=0.0266"),size=5)+
+  theme_classic()+
+  theme(axis.ticks =element_blank(),
+        axis.title = element_text(size=20),legend.text = element_text(size=16),
+        legend.position = "top",legend.justification = "center",
+        axis.text.x =element_text(size=10,color="black", angle=-45,hjust=0),
+        axis.text.y =element_text(size=16,color="black"), panel.grid.major.x = element_blank())
+ggsave("~/Dropbox/work/somatic_gene_conversion/revise/linkage_distance_proportion.pdf",height = 6,width=6)
+
+confirmedornot %>>%
+  count(distcl,distance_class,linked_convert)%>>%ungroup()%>>%
+  tidyr::pivot_wider(names_from = "linked_convert",values_from = "n")%>>%
+  dplyr::select(-distcl)%>>%
+  write_df("~/Dropbox/work/somatic_gene_conversion/revise/linked_distance_table.tsv")
