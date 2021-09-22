@@ -122,7 +122,7 @@ recomb_GC=recombination_rate%>>%
         legend.text = element_text(size=18),
         legend.position = c(0.02,0.05),legend.justification = c(0,0))
 recomb_GC
-<<<<<<< HEAD
+ggsave("~/Dropbox/work/somatic_gene_conversion/recomb_conv_rate_in_arm.pdf",recomb_GC,height = 6,width = 12)
 #########################################################################################################
 # indel on homopolymer vs large indel
 indel_tbl=read_tsv("~/Dropbox/work/somatic_gene_conversion/revise/indel_homoplymre.tsv.gz")
@@ -215,9 +215,6 @@ cowplot::plot_grid(Del,UPD, nrow= 2)
 #                   labels = c("A","B","C"),label_size = 40)
 ggsave("~/Dropbox/work/somatic_gene_conversion/revise/indel_class.pdf",width=6,height = 10)
 write_df(indel_class_tbl,"~/Dropbox/work/somatic_gene_conversion/revise/indel_class_tbl.tsv")
-=======
-ggsave("~/Dropbox/work/somatic_gene_conversion/recomb_conv_rate_in_arm.pdf",recomb_GC,height = 6,width = 12)
->>>>>>> 3e5e72abf8d819d5ace8e87404a20730b5f797d8
 
 ################### patient with TSG trunc LOH by gene conversion and other #################
 CN_variance = read_tsv("by_patient_CN_variance.tsv")
