@@ -299,7 +299,7 @@ TSG_all_GCrate= all_maf %>>%
         axis.ticks.x = element_blank(),strip.placement = "outside",
         strip.background = element_blank(),strip.text.x = element_text(size=20))
 TSG_all_GCrate
-ggsave("~/Dropbox/work/somatic_gene_conversion/CNandTSGGCvsOther_SCNlevel.pdf",TSG_all_GCrate,height = 6,width = 9)
+ggsave("~/Dropbox/work/somatic_gene_conversion/TSGvsAllgene.pdf",TSG_all_GCrate,height = 6,width = 9)
 
 
 

@@ -16,6 +16,9 @@ write_df= function(x, path, delim='\t', na='NA', append=FALSE, col_names=!append
 }
 print_tbl.df = function(x,..){print(as.data.frame(x))}
 
+purity_cutoff=0.7
+tvaf_cutoff=0.8
+
 purity_class = "CPE"
 #patient_list = read_tsv("patient_list.tsv")
 sample_list = read_tsv("sample_list.tsv")
@@ -41,7 +44,9 @@ all_maf %>>%
   mutate(binom_purity=ifelse(allele_num==1,binom_purity/(2-binom_purity),binom_purity))%>>%
   mutate(p=pbinom(t_alt,t_depth,binom_purity*0.5))%>>%
   mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
-  filter((allele_num==2 & p>=0.999)|(allele_num==1),tVAF>tvaf_cutoff)%>>%View
+  filter((allele_num==2 & p>=0.9999)|(allele_num==1),tVAF>tvaf_cutoff)%>>%
+  filter(ascat_minor==1,ascat_major==1)%>>%filter(t_depth<=10)%>>%View
+#%>>%View
 ###### for Linkage analysis ##############
 all_maf%>>%filter(ascat_minor==1,ascat_major==1)%>>%
   inner_join(sample_list%>>%filter(purity>0.5,dcv_median95>dcv_sd95)%>>%dplyr::select(tumor_sample_id,screening,purity),
@@ -74,7 +79,7 @@ LOH_filtering = function(purity_cutoff,tvaf_cutoff){
     mutate(binom_purity=ifelse(allele_num==1,binom_purity/(2-binom_purity),binom_purity))%>>%
     mutate(p=pbinom(t_alt,t_depth,binom_purity*0.5))%>>%
     mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
-    filter((allele_num==2 & p>=0.999)|(allele_num==1),tVAF>tvaf_cutoff)%>>%
+    filter((allele_num==2 & p>=0.9999)|(allele_num==1),tVAF>tvaf_cutoff)%>>%
     count(genotype, variant_type,bef)%>>%mutate(ratio=round(n/bef*1000)/10)%>>%
     mutate(freq=n/sum(n))%>>%
     dplyr::select(genotype,variant_type,n,freq)
@@ -88,7 +93,7 @@ for(p in c(0.6,0.7,0.8)){
     outbl=left_join(outbl,LOH_filtering(p,tvaf)%>>%dplyr::rename(!!paste0("tVAF>",tvaf):=n,!!paste0("tVAF>",tvaf," freq"):=freq))
   }
   outbl
-  write_df(outbl,paste0("~/Dropbox/work/somatic_gene_conversion/cutoff_table/purity",p*100,".tsv"))
+  write_df(outbl,paste0("~/Dropbox/work/somatic_gene_conversion/cutoff_table/purity",p*100,"_00001.tsv"))
 }
 #gene conversionとされる変異の数のみ
 GC_number = function(purity_cutoff,tvaf_cutoff){
@@ -102,14 +107,14 @@ GC_number = function(purity_cutoff,tvaf_cutoff){
     mutate(binom_purity=ifelse(allele_num==1,binom_purity/(2-binom_purity),binom_purity))%>>%
     mutate(p=pbinom(t_alt,t_depth,binom_purity*0.5))%>>%
     mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
-    filter(((allele_num==2 & p>=0.999)|(allele_num==1)) & tVAF>tvaf_cutoff)%>>%
+    filter(((allele_num==2 & p>=0.9999)|(allele_num==1)) & tVAF>tvaf_cutoff)%>>%
     count()
 }
 tibble(purity_cutoff=c(rep(0.6,5),rep(0.7,5),rep(0.8,5)),
        tvaf_cutoff=rep(c(0.75,0.8,0.85,0.9,0.95),3))%>>%
   mutate(ratio=purrr::map2(purity_cutoff,tvaf_cutoff,~GC_number(.x,.y)))%>>%unnest(cols = c(ratio))%>>%#(?.)%>>%
   tidyr::pivot_wider(names_from = "tvaf_cutoff",values_from = "n")%>>%
-  write_df("~/Dropbox/work/somatic_gene_conversion/cutoff_table/GC_number.tsv")
+  write_df("~/Dropbox/work/somatic_gene_conversion/cutoff_table/GC_number00001.tsv")
 
 
 #LOH mutationにおけるgene conversion由来のものの割合のみでみる
@@ -125,15 +130,15 @@ GC_ratio=function(purity_cutoff,tvaf_cutoff){
     mutate(binom_purity=ifelse(allele_num==1,binom_purity/(2-binom_purity),binom_purity))%>>%
     mutate(p=pbinom(t_alt,t_depth,binom_purity*0.5))%>>%
     mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
-    filter((allele_num==2 & p>=0.999)|(allele_num==1),tVAF>tvaf_cutoff)%>>%
+    filter((allele_num==2 & p>=0.9999)|(allele_num==1),tVAF>tvaf_cutoff)%>>%
     mutate(GC=ifelse(genotype=="AB",1,0))%>>%
     summarise(GC_ratio=paste0(sum(GC)," / ",n()," (",signif(sum(GC)/n()*100,4),"%)"))
 }
-tibble(purity_cutoff=c(rep(0.6,5),rep(0.7,5),rep(0.8,5)),
-       tvaf_cutoff=rep(c(0.75,0.8,0.85,0.9,0.95),3))%>>%
+tibble(purity_cutoff=c(rep(0.5,5),rep(0.6,5),rep(0.7,5),rep(0.8,5),rep(0.9,5)),
+       tvaf_cutoff=rep(c(0.75,0.8,0.85,0.9,0.95),5))%>>%
   mutate(ratio=purrr::map2(purity_cutoff,tvaf_cutoff,~GC_ratio(.x,.y)))%>>%unnest(cols = c(ratio))%>>%#(?.)%>>%
   tidyr::pivot_wider(names_from = "tvaf_cutoff",values_from = "GC_ratio")%>>%
-  write_df("~/Dropbox/work/somatic_gene_conversion/cutoff_table/GC_ration_in_LOH.tsv")
+  write_df("~/Dropbox/work/somatic_gene_conversion/cutoff_table/GC_ration_in_LOH00001.tsv")
 
 
 
