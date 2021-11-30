@@ -35,6 +35,10 @@ chr_length = read_tsv("~/Dropbox/work/grch38datas/chr_arm_pq.tsv")%>>%
   group_by(chr)%>>%summarise(start=min(start),end=max(end))
 purity_cutoff=0.7
 tvaf_cutoff=0.8
+#########################################################################################################
+#coverageの確認
+quantile(all_maf$t_depth,probs = c(0.01,0.05,0.1,0.5,1,5,10)/100)
+
 ###################################### allele count == 2 ######################################
 ac2_all_maf = all_maf %>>% filter(ascat_major==1,ascat_minor==1)%>>%
   inner_join(sample_list%>>%filter(is.na(screening),purity>purity_cutoff)%>>%
@@ -47,6 +51,7 @@ ac2_all_maf = all_maf %>>% filter(ascat_major==1,ascat_minor==1)%>>%
   mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
   #filter(tVAF>0.8)%>>%
   mutate(gene_conversion=ifelse(p>=0.999 & tVAF>tvaf_cutoff,1,0))
+
 
 
 ################# by patient gene conversion rate
@@ -118,6 +123,98 @@ recomb_GC=recombination_rate%>>%
         legend.position = c(0.02,0.05),legend.justification = c(0,0))
 recomb_GC
 ggsave("~/Dropbox/work/somatic_gene_conversion/recomb_conv_rate_in_arm.pdf",recomb_GC,height = 6,width = 12)
+#########################################################################################################
+# indel on homopolymer vs large indel
+indel_tbl=read_tsv("~/Dropbox/work/somatic_gene_conversion/revise/indel_homoplymre.tsv.gz")
+LOH_label=all_pass%>>%
+  inner_join(sample_list%>>%filter(purity>0.7,dcv_median95>dcv_sd95)%>>%dplyr::select(tumor_sample_id,screening,purity),
+             by=c("sample_id"="tumor_sample_id"))%>>%
+  mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
+  filter(tVAF>0.8) %>>%
+  mutate(binom_purity=ifelse(purity>0.99,0.99,purity))%>>%
+  mutate(binom_purity=ifelse(allele_num==1,binom_purity/(2-binom_purity),binom_purity))%>>%
+  mutate(p=pbinom(t_alt,t_depth,binom_purity*0.5))%>>%
+  dplyr::select(sample_id,chr,start)
+indel_class_tbl=indel_tbl %>>%
+  mutate(indel_class=ifelse(indel_leng>=5,"Large indel (>5bp)","Other"))%>>%
+  mutate(homopolymer=ifelse(variant_type=="DEL",ifelse(later_homply==0,0,indel_leng+later_homply),later_homply))%>>%
+  mutate(indel_class=ifelse(homopolymer>=3,"Homopolymer (>3bp)",indel_class))%>>%
+  mutate(variant_type=ifelse(variant_type=="INS","Insertion","Deletion"))%>>%
+  group_by(genotype,variant_type,indel_class)%>>%
+  mutate(N=n())%>>%ungroup()%>>%
+  inner_join(LOH_label)%>>%
+  count(genotype,variant_type,indel_class,N)%>>%
+  mutate(LOH_ratio=n/N)
+#calculate pvalue
+indel_p=function(indtbl){
+  focal_tbl=indtbl%>>%dplyr::select(N,n)
+  #print(focal_tbl)
+  return(chisq.test(focal_tbl)$p.value)
+}
+indel_class_tbl%>>%
+  dplyr::select(genotype,variant_type,indel_class,N,n,LOH_ratio)%>>%
+  nest(data=c(indel_class,N,n,LOH_ratio))%>>%
+  mutate(p=purrr::map(data,~indel_p(.)))%>>%
+  dplyr::select(-data)%>>%unnest(cols = p)
+# A        Deletion     4.68e- 2
+# A        Insertion    6.09e- 1
+# AA       Deletion     2.83e-14
+# AA       Insertion    7.02e- 4
+# AB       Deletion     1.80e-26
+# AB       Insertion    4.96e- 1
+
+Conv=indel_class_tbl%>%
+  filter(genotype=="AB")%>>%
+  ggplot(aes(x=indel_class,y=LOH_ratio,fill=indel_class))+geom_bar(stat="identity")+
+  theme_classic()+
+  ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
+  scale_y_continuous(limits = c(0,0.031),expand = c(0,0))+
+  facet_wrap(.~ variant_type,strip.position = "bottom",ncol = 2)+
+  #ggtitle("Gene conversion",)+
+  scale_fill_brewer(palette="Set2")+
+  theme(axis.title.x = element_blank(),axis.title.y=element_text(size=24),
+        legend.position = "top",legend.justification = "center",
+        legend.title = element_blank(),legend.text = element_text(size=18),
+        axis.text.x = element_blank(),axis.text.y = element_text(size=18,color="black"),
+        axis.ticks.x = element_blank(),strip.placement = "outside",
+        strip.background = element_blank(),strip.text.x = element_text(size=24),
+        plot.title= element_text(size=24))
+ggsave("~/Dropbox/work/somatic_gene_conversion/revise/indel_class_conv.pdf",Conv,width=9,height = 6)
+Del=indel_class_tbl%>%
+  filter(genotype=="A")%>>%
+  ggplot(aes(x=indel_class,y=LOH_ratio,fill=indel_class))+geom_bar(stat="identity")+
+  theme_classic()+
+  ylab(expression(paste("Proportion of ",{SM["LOH,Del"]},sep="")))+
+  scale_y_continuous(limits = c(0,0.5),expand = c(0,0))+
+  facet_wrap(.~ variant_type,strip.position = "bottom",ncol = 2)+
+  ggtitle("Deletion",)+scale_fill_brewer(palette="Set2")+
+  theme(axis.title.x = element_blank(),axis.title.y=element_text(size=24),
+        legend.position = "top",legend.justification = "center",
+        legend.title = element_blank(),legend.text = element_text(size=15),
+        axis.text.x = element_blank(),axis.text.y = element_text(size=18,color="black"),
+        axis.ticks.x = element_blank(),strip.placement = "outside",
+        strip.background = element_blank(),strip.text.x = element_text(size=20),
+        plot.title= element_text(size=24))
+UPD=indel_class_tbl%>%
+  filter(genotype=="AA")%>>%
+  ggplot(aes(x=indel_class,y=LOH_ratio,fill=indel_class))+geom_bar(stat="identity")+
+  theme_classic()+
+  ylab(expression(paste("Proportion of ",{SM["LOH,UPD"]},sep="")))+
+  scale_y_continuous(limits = c(0,0.4),expand = c(0,0))+
+  facet_wrap(.~ variant_type,strip.position = "bottom",ncol = 2)+
+  ggtitle("UPD",)+scale_fill_brewer(palette="Set2")+
+  theme(axis.title.x = element_blank(),axis.title.y=element_text(size=24),
+        legend.position = "none",legend.justification = "center",
+        legend.title = element_blank(),legend.text = element_text(size=16),
+        axis.text.x = element_blank(),axis.text.y = element_text(size=18,color="black"),
+        axis.ticks.x = element_blank(),strip.placement = "outside",
+        strip.background = element_blank(),strip.text.x = element_text(size=20),
+        plot.title= element_text(size=24))
+
+cowplot::plot_grid(Del,UPD, nrow= 2)
+#                   labels = c("A","B","C"),label_size = 40)
+ggsave("~/Dropbox/work/somatic_gene_conversion/revise/indel_class.pdf",width=6,height = 10)
+write_df(indel_class_tbl,"~/Dropbox/work/somatic_gene_conversion/revise/indel_class_tbl.tsv")
 
 ################### patient with TSG trunc LOH by gene conversion and other #################
 CN_variance = read_tsv("by_patient_CN_variance.tsv")
