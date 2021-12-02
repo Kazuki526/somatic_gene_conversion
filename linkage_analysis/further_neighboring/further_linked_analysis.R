@@ -21,19 +21,17 @@ write_df= function(x, path, delim='\t', na='NA', append=FALSE, col_names=!append
 
 sample_list = read_tsv("sample_list.tsv")
 
-all_pass=read_tsv("all_pass_with_dist_position_CPE.maf.gz")
+all_maf=read_tsv("all_pass_with_dist_position_CPE.maf.gz")
 
 
 ### for further linkage analysis candidate list
-binom_p=all_pass%>>%
+binom_p=all_maf%>>%
   inner_join(sample_list%>>%filter(purity>0.5,dcv_median95>dcv_sd95)%>>%
                dplyr::select(tumor_sample_id,screening,purity),
              by=c("sample_id"="tumor_sample_id"))%>>%
   mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
   filter(tVAF>0.75) %>>%
-  mutate(binom_purity=ifelse(purity>0.99,0.99,purity))%>>%
-  mutate(binom_purity=ifelse(allele_num==1,binom_purity/(2-binom_purity),binom_purity))%>>%
-  mutate(p=pbinom(t_alt,t_depth,binom_purity*0.5))%>>%
+  mutate(p=pbinom(t_depth-t_alt,t_depth,1-purity*0.5))%>>%
   dplyr::select(sample_id,chr,start,p)
 all_tbl = read_tsv("hetero_germ_linked_candidate.tsv")%>>%
   left_join(binom_p)
@@ -61,16 +59,67 @@ write_df(futher_focal,"~/Dropbox/work/somatic_gene_conversion/revise/further_lin
 ################################################################################################################
 ################################################################################################################
 linkage_tbl=read_tsv("~/Dropbox/work/somatic_gene_conversion/revise/further_hetero_germ_linked_candidate.tsv")
-LOH_label=all_pass%>>%
+LOH_label=all_maf%>>%
   inner_join(sample_list%>>%filter(purity>0.7,dcv_median95>dcv_sd95)%>>%dplyr::select(tumor_sample_id,screening,purity),
              by=c("sample_id"="tumor_sample_id"))%>>%
   mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
-  filter(tVAF>0.8) %>>%
-  mutate(binom_purity=ifelse(purity>0.99,0.99,purity))%>>%
-  mutate(binom_purity=ifelse(allele_num==1,binom_purity/(2-binom_purity),binom_purity))%>>%
-  mutate(p=pbinom(t_alt,t_depth,binom_purity*0.5))%>>%
+  mutate(p=pbinom(t_depth-t_alt,t_depth,1-purity*0.5))%>>%
+  filter(tVAF>0.8,p<0.001) %>>%
   dplyr::select(sample_id,chr,start)
 linkage_tbl%>>%inner_join(LOH_label)%>>%
   tidyr::separate(col=linked_state,into=c("ref-ref","ref-alt","alt-ref","alt-alt"),sep=":",convert=T)%>>%
   filter(`alt-ref` + `alt-alt`>5)%>>% (?.%>>%count(sample_id,chr,start,ref,alt)%>>%count()) %>>%
   filter(`alt-ref` >0 & `alt-alt` >0)%>>%(?.%>>%count(sample_id,chr,start,ref,alt)%>>%count())
+
+################################################################################################################
+################################################################################################################
+################################################################################################################
+# list of gene covnersion mutaiton
+ac2_all_maf = all_maf %>>% filter(ascat_major==1,ascat_minor==1)%>>%
+  inner_join(sample_list%>>%filter(is.na(screening),purity>0.7)%>>%
+               dplyr::select(tumor_sample_id,purity),by=c("sample_id"="tumor_sample_id"))%>>%
+  mutate(variant_type=ifelse(variant_type=="SNP","SNV","indel"))%>>%
+  filter(mutect_dcv_posi/mutect_mut_num > 0.1, mutect_dcv_posi/mutect_mut_num < 0.9) %>>%
+  mutate(p=pbinom(t_depth-t_alt,t_depth,1-purity*0.5))%>>%
+  mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
+  #filter(tVAF>0.8)%>>%
+  mutate(gene_conversion=ifelse(p<0.001 & tVAF>0.8,1,0))
+gclist=ac2_all_maf%>>%filter(gene_conversion==1)%>>%
+  dplyr::select(patient_id,sample_id,chr,start,ref,alt,gene,variant_classification,impact)
+
+linkage_tbl = read_tsv("hetero_germ_linked_candidate.tsv")%>>%
+  left_join(binom_p)
+have_neib_germ=linkage_tbl %>>%
+  filter(is.na(screening),mutect_dcv_posi/mutect_mut_num>0.1,mutect_dcv_posi/mutect_mut_num<0.9,
+         purity>0.7,tVAF>0.8,p<0.001)%>>%
+  tidyr::separate(col=linked_state,into=c("ref-ref","ref-alt","alt-ref","alt-alt"),sep=":",convert=T)%>>%
+  filter(`alt-ref` + `alt-alt`>5)%>>% count(sample_id,chr,start,ref,alt)%>>%dplyr::select(-n)%>>%
+  mutate(have_neib_germ="yes")
+
+have_evid = linkage_tbl %>>%
+  filter(is.na(screening),mutect_dcv_posi/mutect_mut_num>0.1,mutect_dcv_posi/mutect_mut_num<0.9,
+         purity>0.7,tVAF>0.8,p<0.001)%>>%
+  tidyr::separate(col=linked_state,into=c("ref-ref","ref-alt","alt-ref","alt-alt"),sep=":",convert=T)%>>%
+  filter(`alt-ref` + `alt-alt`>5)%>>% 
+  filter(`alt-ref` >=1 & `alt-alt` >=1)%>>%count(sample_id,chr,start,ref,alt)%>>%dplyr::select(-n)%>>%
+  mutate(have_evid="yes")
+
+further_tbl=read_tsv("~/Dropbox/work/somatic_gene_conversion/revise/further_hetero_germ_linked_candidate.tsv")%>>%
+  left_join(binom_p)
+have_further=further_tbl %>>%
+  filter(mutect_dcv_posi/mutect_mut_num>0.1,mutect_dcv_posi/mutect_mut_num<0.9,
+         purity>0.7,tVAF>0.8,p<0.001)%>>%
+  tidyr::separate(col=linked_state,into=c("ref-ref","ref-alt","alt-ref","alt-alt"),sep=":",convert=T)%>>%
+  filter(`alt-ref` + `alt-alt`>5)%>>% 
+  filter(`alt-ref` >=1 & `alt-alt` >=1)%>>%
+  count(sample_id,chr,start,ref,alt)%>>%dplyr::select(-n)%>>%mutate(further="yes")
+
+gclist%>>%left_join(have_neib_germ)%>>%
+  left_join(have_evid)%>>%left_join(have_further)%>>%
+  mutate(have_neib_germ=ifelse(!is.na(have_neib_germ),"yes","no"))%>>%
+  mutate(have_evidence=ifelse(!is.na(have_evid)|!is.na(further),"yes",
+                              ifelse(have_neib_germ=="yes","no","-")))%>>%
+  dplyr::select(-have_evid,-further)%>>%
+  arrange(desc(have_neib_germ),desc(have_evidence))%>>%
+  write_df("revise/all_gene_conversion_mutation.tsv")
+
