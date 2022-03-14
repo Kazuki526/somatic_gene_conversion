@@ -75,9 +75,12 @@ ac2_all_maf = all_maf %>>% filter(ascat_major==1,ascat_minor==1)%>>%
 
 ################################ distribution of GC rate ######################################
 ################# by patient gene conversion rate
+library(ggpmisc)
 by_pGC=ac2_all_maf %>>% group_by(cancer_type,sample_id,purity)%>>%
   summarise(gene_conversion=sum(gene_conversion),all=n())%>>%(?.%>>%arrange(desc(gene_conversion)))%>>%
-  ggplot()+geom_point(aes(x=all,y=gene_conversion))+
+  ggplot(aes(x=all,y=gene_conversion))+geom_point()+
+  stat_smooth(method='lm',se=F,colour="gray")+
+  stat_poly_eq(formula=y ~ x, aes(label=paste(stat(rr.label), stat(p.value.label), sep="~~~")),parse=TRUE,size=6)+
   #scale_x_log10()+scale_y_log10()+
   theme_classic()+xlab("Number of somatic mutations")+
   ylab(expression(paste("Number of ",{SM["LOH,Conv"]},sep="")))+

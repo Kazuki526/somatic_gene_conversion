@@ -22,7 +22,7 @@ print_tbl.df = function(x,..){print(as.data.frame(x))}
 
 sample_list = read_tsv("sample_list.tsv")
 all_maf = read_tsv(paste0("all_pass_with_dist_position_CPE.maf.gz"))
-driver_gene = read_tsv("~/Dropbox/cooperative/machine_learning/gene_list/CGC_v89_without_fusion.tsv")%>>%
+driver_gene = read_tsv("~/Dropbox/cooperative/cancer_driver_machine_learning/gene_list/CGC_v89_without_fusion.tsv")%>>%
   dplyr::rename(gene=`Gene Symbol`,role =`Role in Cancer`,tumor_type=`Tumour Types(Somatic)`)%>>%
   dplyr::select(gene,role,tumor_type)
 chr_length = read_tsv("~/Dropbox/work/grch38datas/chr_arm_pq.tsv")%>>%
@@ -68,13 +68,13 @@ TSG_all_GCrate= all_maf %>>%
   filter((allele_num==2 & p<0.001)|(allele_num==1),tVAF>tvaf_cutoff)%>>%
   count(genotype, role, variant_type,bef)%>>%mutate(ratio=n/bef)%>>%(?.)%>>%
   ggplot(aes(x=role,y=ratio,fill=role))+geom_bar(stat="identity")+facet_wrap(.~ variant_type,strip.position = "bottom")+
-  geom_signif(data=trunc_tbl,aes(group=g),
-              xmin=1,xmax=2,y_position=0.023,annotations="**",textsize = 6)+
-  geom_signif(data=misil_tbl,aes(group=g),
-              xmin=1,xmax=2,y_position=0.012,annotations="NS",textsize = 6)+
+  #geom_signif(data=trunc_tbl,aes(group=g),
+  #            xmin=1,xmax=2,y_position=0.023,annotations="**",textsize = 6)+
+  #geom_signif(data=misil_tbl,aes(group=g),
+  #            xmin=1,xmax=2,y_position=0.012,annotations="NS",textsize = 6)+
   theme_classic()+
   ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
-  scale_y_continuous(limits = c(0,0.0245),expand = c(0,0))+
+  #scale_y_continuous(limits = c(0,0.0245),expand = c(0,0))+
   theme(axis.title.x = element_blank(),axis.title.y=element_text(size=24),
         legend.position = c(0.5,1),legend.justification = c(0.5,1),
         legend.direction = "horizontal",
@@ -257,11 +257,14 @@ k_GCrate=temp%>>%mutate(tsg_trunc_loh=ifelse(is.na(tsg_trunc_loh),0,1))%>>%
   mutate(mean_tsg_trunc_loh=mean(tsg_trunc_loh),mean_prop_1_1=mean(prop_1_1))%>>%
   group_by(scnv_level_name)%>>%
   summarise(ratio=mean(tsg_trunc_loh),
-            expectation=first(mean_tsg_trunc_loh)*(mean(prop_1_1)/first(mean_prop_1_1)))%>>%(?.)%>>%
+            expectation=first(mean_tsg_trunc_loh)*(mean(prop_1_1)/first(mean_prop_1_1)),
+            expectation_sd=first(mean_tsg_trunc_loh)*(sd(prop_1_1)/first(mean_prop_1_1)))%>>%(?.)%>>%
   ggplot()+
   geom_bar(aes(x=scnv_level_name,y=ratio,fill="Observation"),stat = "identity")+
   geom_line(aes(x=scnv_level_name,y=expectation,group="Expectation",color="Expectation"))+
   geom_point(aes(x=scnv_level_name,y=expectation,color="Expectation"))+
+  geom_errorbar(aes(x=scnv_level_name,ymin=expectation-expectation_sd,ymax=expectation+expectation_sd),
+                width=0.1,colour='gray45')+
   theme_classic()+  
   scale_y_continuous(expand = c(0,0),limits = c(0,0.043))+
   scale_fill_manual(values = "#F8766D")+
