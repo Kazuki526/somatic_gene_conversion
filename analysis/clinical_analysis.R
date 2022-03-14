@@ -88,7 +88,7 @@ ggsave("revise2/byStage_GCrage_merged.pdf")
 library(survival)
 ggplot(clinic_GC_tbl)+geom_point(aes(x=n,y=GCn))
 # number of mutation >2500 の患者のみで比較してみる？上下の境は全体平均の0.0038(54vs35)
-KM_group=clinic_GC_tbl%>>%filter(n>2500)%>>%mutate(GCrate=GCn/n)%>>%
+KM_group=clinic_GC_tbl%>>%filter(n>2000)%>>%mutate(GCrate=GCn/n)%>>%
   mutate(HL_GCrate=ifelse(GCrate>0.0038,"Gene conversion High","Gene conversion Low"))
 
 pdf("revise2/OS_KM.pdf",width = 6,height = 4)
@@ -97,7 +97,7 @@ survdiff(Surv(OS_time/365.25,OS)~HL_GCrate,data=KM_group)
 OS_survfit=survfit(Surv(OS_time/365.25,OS)~HL_GCrate,data=KM_group)
 plot(OS_survfit,las=1,xlab="Survival Time (years)", ylab="Overall Survivial",col=2:3)
 legend("bottomleft",legend=c("High gene conversion","Low gene conversion"),lty=1, col=2:3)
-text(x=15,y=0.1,label="p = 0.03")
+text(x=15,y=0.1,label="p = 0.6")
 dev.off()
 
 pdf("revise2/PFI_KM.pdf",width = 6,height = 4)
@@ -105,5 +105,31 @@ survdiff(Surv(PFI_time/365.25,PFI)~HL_GCrate,data=KM_group)
 PFI_survfit=survfit(Surv(PFI_time/365.25,PFI)~HL_GCrate,data=KM_group)
 plot(PFI_survfit,las=1,xlab="Survival Time (years)", ylab="Progression free interval",col=2:3)
 legend("bottomleft",legend=c("High gene conversion","Low gene conversion"),lty=1, col=2:3)
-text(x=10,y=0.1,label="p = 0.2")
+text(x=10,y=0.1,label="p = 0.5")
 dev.off()
+
+
+######################### CMS ###############################
+CMS_tbl=read_tsv("revise2/CRCSC_data/clinical_molecular_public_all.txt")
+CMS_tbl%>>%filter(cms_label!="NOLBL")%>>%dplyr::rename(patient_id=sample)%>>%
+  dplyr::select(patient_id,cms_label)%>>%
+  inner_join(clinic_GC_tbl)%>>%group_by(cms_label)%>>%
+  summarise(GCrate=sum(GCn)/sum(n),GCsd=sd(GCn/n))%>>%(?.)%>>%
+  ggplot()+geom_bar(aes(x=cms_label,y=GCrate),stat = "identity")+
+  theme_classic()+xlab("colorectal cancer consensus molecular subtype (CMS)")+
+  ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
+  theme(axis.title=element_text(size=24),axis.text = element_text(size = 18,color="black"))
+ggsave("revise2/byCMS_GCrate_mereged.pdf")
+
+CMS_tbl%>>%filter(cms_label!="NOLBL")%>>%dplyr::rename(patient_id=sample)%>>%
+  dplyr::select(patient_id,cms_label)%>>%
+  inner_join(clinic_GC_tbl)%>>%filter(n>0)%>>%
+  group_by(cms_label)%>>%
+  summarise(GCrate=mean(GCn/n),GCsd=sd(GCn/n))%>>%(?.)%>>%
+  ggplot()+geom_bar(aes(x=cms_label,y=GCrate),stat = "identity")+
+  geom_errorbar(aes(x=cms_label,ymin=GCrate-GCsd,ymax=GCrate+GCsd),width=0.2)+
+  theme_classic()+xlab("colorectal cancer consensus molecular subtype (CMS)")+
+  ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
+  theme(axis.title=element_text(size=24),axis.text = element_text(size = 18,color="black"))
+ggsave("revise2/byCMS_GCrate.pdf")
+
