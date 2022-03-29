@@ -57,31 +57,20 @@ clinic_GC_tbl%>>%filter(n>0)%>>%filter(str_detect(stage,"Stage"))%>>%
   mutate(stage=ifelse(str_detect(stage,"Stage II[ABC]"),"Stage II",stage))%>>%
   mutate(stage=ifelse(str_detect(stage,"Stage I[AB]"),"Stage I",stage))%>>%
   group_by(stage)%>>%
-  summarise(GCprop=mean(GCn/n),GCsd=sd(GCn/n),n=n())%>>%
-  ggplot(aes(x=stage,y=GCprop))+
-  geom_bar(stat="identity")+
-  geom_errorbar(aes(ymin=GCprop-GCsd,ymax=GCprop+GCsd),width=0.2)+
-  geom_text(aes(x=stage,y=-max(GCsd),label=n))+
-  theme_classic()+xlab("")+
-  ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
-  theme(axis.title=element_text(size=24),axis.text.y = element_text(size = 12,color="black"),
-        axis.text.x = element_text(size = 10,color="black",angle = -45,hjust = 0))
-ggsave("revise2/byStage_GCrage.pdf")
-
-clinic_GC_tbl%>>%filter(n>0)%>>%filter(str_detect(stage,"Stage"))%>>%
-  mutate(stage=ifelse(str_detect(stage,"Stage III"),"Stage III",stage))%>>%
-  mutate(stage=ifelse(str_detect(stage,"Stage II[ABC]"),"Stage II",stage))%>>%
-  mutate(stage=ifelse(str_detect(stage,"Stage I[AB]"),"Stage I",stage))%>>%
-  group_by(stage)%>>%
   summarise(GCprop=sum(GCn)/sum(n),n=n())%>>%
+  mutate(low=qbinom(0.025,n,GCprop)/n,up=qbinom(0.975,n,GCprop)/n)%>>%(?.)%>>%
+  mutate(low=ifelse(GCprop==0,NA,low),up=ifelse(GCprop==0,NA,up))%>>%
   ggplot(aes(x=stage,y=GCprop))+
   geom_bar(stat="identity")+
-  geom_text(aes(x=stage,y=-0.001,label=n))+
+  geom_errorbar(aes(ymin=low,ymax=up),width=0.2)+
+  geom_text(aes(x=stage,y=-0.0005,label=n))+
   theme_classic()+xlab("")+
   ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
-  theme(axis.title=element_text(size=24),axis.text.y = element_text(size = 12,color="black"),
-        axis.text.x = element_text(size = 10,color="black",angle = -45,hjust = 0))
-ggsave("revise2/byStage_GCrage_merged.pdf")
+  theme(axis.title=element_text(size=24),axis.text.y = element_text(size = 18,color="black"),
+        axis.text.x = element_text(size = 15,color="black",angle = -45,hjust = 0))
+ggsave("revise2/byStage_GCrage.pdf",height = 6,width=9)
+
+
 
 
 ############ kaplan myer #################
@@ -91,21 +80,21 @@ ggplot(clinic_GC_tbl)+geom_point(aes(x=n,y=GCn))
 KM_group=clinic_GC_tbl%>>%filter(n>2000)%>>%mutate(GCrate=GCn/n)%>>%
   mutate(HL_GCrate=ifelse(GCrate>0.0038,"Gene conversion High","Gene conversion Low"))
 
-pdf("revise2/OS_KM.pdf",width = 6,height = 4)
+pdf("revise2/OS_KM.pdf",width = 8,height = 6)
 #with(data = KM_group,Surv(OS_time,OS))  
 survdiff(Surv(OS_time/365.25,OS)~HL_GCrate,data=KM_group)
 OS_survfit=survfit(Surv(OS_time/365.25,OS)~HL_GCrate,data=KM_group)
-plot(OS_survfit,las=1,xlab="Survival Time (years)", ylab="Overall Survivial",col=2:3)
-legend("bottomleft",legend=c("High gene conversion","Low gene conversion"),lty=1, col=2:3)
-text(x=15,y=0.1,label="p = 0.6")
+plot(OS_survfit,las=1,xlab="Survival Time (years)", ylab="Overall Survivial",col=2:3,cex.lab=2,cex.axis=1.5)
+legend("bottomleft",legend=c("High gene conversion","Low gene conversion"),lty=1, col=2:3,cex=1.5)
+text(x=15,y=0.1,label="p = 0.6",cex=1.5)
 dev.off()
 
-pdf("revise2/PFI_KM.pdf",width = 6,height = 4)
+pdf("revise2/PFI_KM.pdf",width = 8,height = 6)
 survdiff(Surv(PFI_time/365.25,PFI)~HL_GCrate,data=KM_group)
 PFI_survfit=survfit(Surv(PFI_time/365.25,PFI)~HL_GCrate,data=KM_group)
-plot(PFI_survfit,las=1,xlab="Survival Time (years)", ylab="Progression free interval",col=2:3)
-legend("bottomleft",legend=c("High gene conversion","Low gene conversion"),lty=1, col=2:3)
-text(x=10,y=0.1,label="p = 0.5")
+plot(PFI_survfit,las=1,xlab="Survival Time (years)", ylab="Progression free interval",col=2:3,cex.lab=2,cex.axis=1.5)
+legend("bottomleft",legend=c("High gene conversion","Low gene conversion"),lty=1, col=2:3,cex=1.5)
+text(x=10,y=0.1,label="p = 0.5",cex=1.5)
 dev.off()
 
 
@@ -114,22 +103,15 @@ CMS_tbl=read_tsv("revise2/CRCSC_data/clinical_molecular_public_all.txt")
 CMS_tbl%>>%filter(cms_label!="NOLBL")%>>%dplyr::rename(patient_id=sample)%>>%
   dplyr::select(patient_id,cms_label)%>>%
   inner_join(clinic_GC_tbl)%>>%group_by(cms_label)%>>%
-  summarise(GCrate=sum(GCn)/sum(n),GCsd=sd(GCn/n))%>>%(?.)%>>%
-  ggplot()+geom_bar(aes(x=cms_label,y=GCrate),stat = "identity")+
-  theme_classic()+xlab("colorectal cancer consensus molecular subtype (CMS)")+
-  ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
-  theme(axis.title=element_text(size=24),axis.text = element_text(size = 18,color="black"))
-ggsave("revise2/byCMS_GCrate_mereged.pdf")
-
-CMS_tbl%>>%filter(cms_label!="NOLBL")%>>%dplyr::rename(patient_id=sample)%>>%
-  dplyr::select(patient_id,cms_label)%>>%
-  inner_join(clinic_GC_tbl)%>>%filter(n>0)%>>%
-  group_by(cms_label)%>>%
-  summarise(GCrate=mean(GCn/n),GCsd=sd(GCn/n))%>>%(?.)%>>%
-  ggplot()+geom_bar(aes(x=cms_label,y=GCrate),stat = "identity")+
-  geom_errorbar(aes(x=cms_label,ymin=GCrate-GCsd,ymax=GCrate+GCsd),width=0.2)+
+  summarise(GCprop=sum(GCn)/sum(n),n=n())%>>%
+  mutate(low=qbinom(0.025,n,GCprop)/n,up=qbinom(0.975,n,GCprop)/n)%>>%(?.)%>>%
+  mutate(low=ifelse(GCprop==0,NA,low),up=ifelse(GCprop==0,NA,up))%>>%
+  ggplot(aes(x=cms_label,y=GCprop))+geom_bar(stat = "identity")+
+  geom_errorbar(aes(ymin=low,ymax=up),width=0.2)+
   theme_classic()+xlab("colorectal cancer consensus molecular subtype (CMS)")+
   ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
   theme(axis.title=element_text(size=24),axis.text = element_text(size = 18,color="black"))
 ggsave("revise2/byCMS_GCrate.pdf")
+
+
 

@@ -75,8 +75,18 @@ ac2_all_maf = all_maf %>>% filter(ascat_major==1,ascat_minor==1)%>>%
 
 ################################ distribution of GC rate ######################################
 ################# by patient gene conversion rate
+ac2_all_maf %>>% group_by(cancer_type,sample_id,purity)%>>%
+  summarise(gene_conversion=sum(gene_conversion))%>>%ungroup()%>>%
+  count(gene_conversion)%>>%(?.%>>%arrange(-n))%>>%
+  mutate(n=ifelse(n==4551,80,ifelse(n==218,65,n)))%>>%
+  ggplot()+geom_bar(aes(x=gene_conversion,y=n),stat="identity")+
+  scale_y_continuous(breaks = c(0,10,20,30,40,65,80))+
+  theme_classic()+ylab("Count")+
+  xlab(expression(paste("Number of ",{SM["LOH,Conv"]},sep="")))+
+  theme(axis.title=element_text(size=24),axis.text = element_text(size = 18,color="black"))
+ggsave("~/Dropbox/work/somatic_gene_conversion/revise2/conv_dist.pdf",height = 6,width = 9)
 library(ggpmisc)
-by_pGC=ac2_all_maf %>>% group_by(cancer_type,sample_id,purity)%>>%
+by_pGC=ac2_all_maf %>>% group_by(cancer_type,sample_id,purity)%>>%#filter(variant_type=="indel")%>>%
   summarise(gene_conversion=sum(gene_conversion),all=n())%>>%(?.%>>%arrange(desc(gene_conversion)))%>>%
   ggplot(aes(x=all,y=gene_conversion))+geom_point()+
   stat_smooth(method='lm',se=F,colour="gray")+
@@ -88,7 +98,7 @@ by_pGC=ac2_all_maf %>>% group_by(cancer_type,sample_id,purity)%>>%
 by_pGC
 ggsave("~/Dropbox/work/somatic_gene_conversion/by_patient_num_of_mut_conv.pdf",by_pGC,height = 6,width = 6)
 
-################################### GR hotspot search #########################################
+################################### GC hotspot search #########################################
 allmut=count(ac2_all_maf)$n
 allGC =sum(ac2_all_maf$gene_conversion)
 GC_fisher=function(data){
@@ -161,10 +171,12 @@ indel_class_tbl%>>%
 
 Conv=indel_class_tbl%>%
   filter(genotype=="AB")%>>%
+  mutate(low=qbinom(0.025,N,LOH_ratio)/N,up=qbinom(0.975,N,LOH_ratio)/N)%>>%
   ggplot(aes(x=indel_class,y=LOH_ratio,fill=indel_class))+geom_bar(stat="identity")+
+  geom_errorbar(aes(ymin=low,ymax=up),width=0.2)+
   theme_classic()+
   ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
-  scale_y_continuous(limits = c(0,0.031),expand = c(0,0))+
+  #scale_y_continuous(limits = c(0,0.031),expand = c(0,0))+
   facet_wrap(.~ variant_type,strip.position = "bottom",ncol = 2)+
   #ggtitle("Gene conversion",)+
   scale_fill_brewer(palette="Set2")+

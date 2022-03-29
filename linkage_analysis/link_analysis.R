@@ -93,10 +93,12 @@ confirm_permutation()
 confirmedornot %>>%
   count(distcl,distance_class,linked_convert)%>>%ungroup()%>>%
   group_by(distance_class)%>>%mutate(Proportion = n/sum(n))%>>%
-  filter(linked_convert=="confirmed")%>>%(?.)%>>%
+  filter(linked_convert=="confirmed")%>>%
+  mutate(low=qbinom(0.025,n,Proportion)/n,up=qbinom(0.975,n,Proportion)/n)%>>%(?.)%>>%
   ggplot(aes(x=reorder(distance_class,distcl),y=Proportion,fill=linked_convert))+
   geom_bar(color="black",stat = "identity",width = 0.8)+
   geom_smooth(mapping = aes(x = distcl+1, y = Proportion),method = "lm",se=F, color="black")+
+  geom_errorbar(aes(ymin=low,ymax=up),width=0.2)+
   scale_y_continuous(breaks = c(0,0.2,0.4,0.6,0.8,1.0),limits = c(0,1.05),expand = c(0,0))+
   scale_fill_manual(values=c("red"))+
   guides(fill=F)+

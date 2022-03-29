@@ -22,9 +22,6 @@ print_tbl.df = function(x,..){print(as.data.frame(x))}
 
 sample_list = read_tsv("sample_list.tsv")
 all_maf = read_tsv(paste0("all_pass_with_dist_position_CPE.maf.gz"))
-driver_gene = read_tsv("~/Dropbox/cooperative/cancer_driver_machine_learning/gene_list/CGC_v89_without_fusion.tsv")%>>%
-  dplyr::rename(gene=`Gene Symbol`,role =`Role in Cancer`,tumor_type=`Tumour Types(Somatic)`)%>>%
-  dplyr::select(gene,role,tumor_type)
 chr_length = read_tsv("~/Dropbox/work/grch38datas/chr_arm_pq.tsv")%>>%
   group_by(chr)%>>%summarise(start=min(start),end=max(end))
 purity_cutoff=0.7
@@ -44,6 +41,10 @@ ac2_all_maf = all_maf %>>% filter(ascat_major==1,ascat_minor==1)%>>%
 
 #########################################################################################
 #### gene conversion rate in TSG and nonTSG
+driver_gene = read_tsv("~/Dropbox/cooperative/cancer_driver_machine_learning/gene_list/CGC_v89_without_fusion.tsv")%>>%
+  dplyr::rename(gene=`Gene Symbol`,role =`Role in Cancer`,tumor_type=`Tumour Types(Somatic)`)%>>%
+  dplyr::select(gene,role,tumor_type)
+
 trunc_tbl=data.frame(variant_type=factor(c("Truncating"),levels=c("Truncating","Missense","Silent","inframe_indel")),
                      role=factor(c("TSGs  "),levels=c("TSGs  ","non-TSGs")),ratio=0,g=1)
 misil_tbl=data.frame(variant_type=factor(c("Missense","Silent"),levels=c("Truncating","Missense","Silent","inframe_indel")),
@@ -54,8 +55,8 @@ TSG_all_GCrate= all_maf %>>%
                dplyr::select(tumor_sample_id,purity),by=c("sample_id"="tumor_sample_id"))%>>%
   mutate(genotype=ifelse(ascat_major==2,"AA",ifelse(ascat_minor==1,"AB","A"))) %>>%filter(genotype=="AB")%>>%
   left_join(driver_gene%>>%filter(str_detect(role,"TSG"))%>>%mutate(role="TSG")) %>>%
-  mutate(role=ifelse(is.na(role),"non-TSGs","TSGs  "))%>>%
-  mutate(role=factor(role,levels=c("TSGs  ","non-TSGs")))%>>%
+  mutate(role=ifelse(is.na(role),"non TSG","TSG  "))%>>%
+  mutate(role=factor(role,levels=c("TSG  ","non TSG")))%>>%
   filter(impact=="MODERATE"|impact=="HIGH"|variant_classification=="Silent")%>>%
   mutate(variant_type=ifelse(impact=="HIGH","Truncating",ifelse(variant_type=="SNP",
                                                                 ifelse(variant_classification=="Silent","Silent","Missense"),"inframe_indel"))) %>>%
@@ -66,8 +67,11 @@ TSG_all_GCrate= all_maf %>>%
   mutate(p=pbinom(t_depth-t_alt,t_depth,1-purity*0.5))%>>%
   mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
   filter((allele_num==2 & p<0.001)|(allele_num==1),tVAF>tvaf_cutoff)%>>%
-  count(genotype, role, variant_type,bef)%>>%mutate(ratio=n/bef)%>>%(?.)%>>%
-  ggplot(aes(x=role,y=ratio,fill=role))+geom_bar(stat="identity")+facet_wrap(.~ variant_type,strip.position = "bottom")+
+  count(genotype, role, variant_type,bef)%>>%mutate(ratio=n/bef)%>>%
+  mutate(low=qbinom(0.025,bef,ratio)/bef,up=qbinom(0.975,bef,ratio)/bef)%>>%(?.)%>>%
+  ggplot(aes(x=role,y=ratio,fill=role))+
+  geom_bar(stat="identity")+facet_wrap(.~ variant_type,strip.position = "bottom")+
+  geom_errorbar(aes(ymin=low,ymax=up),width=0.2)+
   #geom_signif(data=trunc_tbl,aes(group=g),
   #            xmin=1,xmax=2,y_position=0.023,annotations="**",textsize = 6)+
   #geom_signif(data=misil_tbl,aes(group=g),
@@ -123,7 +127,14 @@ LOHinTSG%>>%
 ggsave("~/Dropbox/work/somatic_gene_conversion/revise/TSG_piechart.pdf",width=8,height = 5)
 
 ############################ GC rate by gene and cancer type #####################################
-ac2_all_maf%>>%count(consequence,impact)
+allmut=count(ac2_all_maf)$n
+allGC =sum(ac2_all_maf$gene_conversion)
+GC_fisher=function(data){
+  alln=data$alln
+  gcn=data$gcn
+  fisher.test(matrix(c(gcn, alln-gcn,allGC-gcn, allmut-alln-allGC+gcn),nrow=2),
+              alternative = "g")$p.value
+}
 # by gene
 gcrate_gene=ac2_all_maf%>>%#filter(impact!="MODIFIER")%>>%
   group_by(gene)%>>%summarise(gcn=sum(gene_conversion),alln=n())%>>%
@@ -146,8 +157,9 @@ gcrate_ct%>>%arrange(FDR)
 
 gcrate_ct%>>%
   mutate(Significance=ifelse(FDR<0.05,"FDR<0.05","Not significant"))%>>%
+  mutate(low=qbinom(0.025,alln,gcrate)/alln,up=qbinom(0.975,alln,gcrate)/alln)%>>%
   ggplot(aes(x=reorder(cancer_type,desc(gcrate)),y=gcrate,fill=Significance))+
-  geom_bar(stat = "identity")+
+  geom_bar(stat = "identity")+geom_errorbar(aes(ymin=low,ymax=up),width=0.2)+
   scale_y_continuous(limits = c(0,0.014),expand = c(0,0))+
   scale_fill_manual(values=c("#e41a1c","#377eb8"))+
   theme_classic()+xlab("Cancer type")+
@@ -256,15 +268,14 @@ k_GCrate=temp%>>%mutate(tsg_trunc_loh=ifelse(is.na(tsg_trunc_loh),0,1))%>>%
                                 levels = c("100-90%","90-80%","80-70%","70-60%","60-50%","50%-")))%>>%
   mutate(mean_tsg_trunc_loh=mean(tsg_trunc_loh),mean_prop_1_1=mean(prop_1_1))%>>%
   group_by(scnv_level_name)%>>%
-  summarise(ratio=mean(tsg_trunc_loh),
-            expectation=first(mean_tsg_trunc_loh)*(mean(prop_1_1)/first(mean_prop_1_1)),
-            expectation_sd=first(mean_tsg_trunc_loh)*(sd(prop_1_1)/first(mean_prop_1_1)))%>>%(?.)%>>%
+  summarise(ratio=mean(tsg_trunc_loh),n=n(),
+            expectation=first(mean_tsg_trunc_loh)*(mean(prop_1_1)/first(mean_prop_1_1)))%>>%
+  mutate(low=qbinom(0.025,n,ratio)/n,up=qbinom(0.975,n,ratio)/n)%>>%(?.)%>>%
   ggplot()+
   geom_bar(aes(x=scnv_level_name,y=ratio,fill="Observation"),stat = "identity")+
+  geom_errorbar(aes(x=scnv_level_name,ymin=low,ymax=up),width=0.2)+
   geom_line(aes(x=scnv_level_name,y=expectation,group="Expectation",color="Expectation"))+
   geom_point(aes(x=scnv_level_name,y=expectation,color="Expectation"))+
-  geom_errorbar(aes(x=scnv_level_name,ymin=expectation-expectation_sd,ymax=expectation+expectation_sd),
-                width=0.1,colour='gray45')+
   theme_classic()+  
   scale_y_continuous(expand = c(0,0),limits = c(0,0.043))+
   scale_fill_manual(values = "#F8766D")+
@@ -298,7 +309,42 @@ prop.test(x=Xsq$ratio,n=Xsq$N,p=Xsq$expectation)
 
 
 
+########################################################################
+# chromothripsis
+ascat=read_tsv("all_patient_ascat.tsv.gz")
+ascat %>>% count(sample,chr)%>>%
+  mutate(num_breakpoint=n-1)%>>%
+  mutate(num_breakpoint=ifelse(num_breakpoint>25,26,num_breakpoint))%>>%
+  ggplot()+
+  geom_histogram(aes(x=num_breakpoint),binwidth = 1)+
+  theme_classic()+
+  xlim(c(-0.5,26.5))+xlab("Number of breakpoints per chromosome")+
+  ylab("Number of chromosomes")+
+  theme(axis.title = element_text(size=24),
+        axis.text  = element_text(size=18,color="black"))
+ggsave("revise/breakpoint_distribution.pdf")
 
+
+chromothripsis_chr=ascat %>>%
+  count(sample,chr)%>>%
+  mutate(num_breakpoint=n-1,chr=paste0("chr",chr))%>>%
+  dplyr::rename(patient_id=sample)
+
+
+ac2_all_maf%>>%left_join(chromothripsis_chr)%>>%
+  mutate(num_breakpoint=ifelse(num_breakpoint>25,26,num_breakpoint))%>>%
+  group_by(num_breakpoint)%>>%
+  summarise(gc_rate=sum(gene_conversion)/n(),gc=sum(gene_conversion),N=n())%>>%
+  mutate(low=qbinom(0.025,N,gc_rate)/N,up=qbinom(0.975,N,gc_rate)/N)%>>%(?.)%>>%
+  ggplot(aes(x=num_breakpoint,y=gc_rate))+
+  geom_bar(stat = "identity")+
+  geom_errorbar(aes(ymin=low,ymax=up),width=0.2)+
+  theme_classic()+
+  xlim(c(-0.5,26.5))+xlab("Number of breakpoints per chromosome")+
+  ylab(expression(paste("Proportion of ",{SM["LOH,UPD"]},sep="")))+
+  theme(axis.title = element_text(size=24),
+        axis.text  = element_text(size=18,color="black"))
+ggsave("revise/breakpoint_gcrate.pdf")
 
 
 
