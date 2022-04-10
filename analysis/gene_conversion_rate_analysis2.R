@@ -132,16 +132,26 @@ allGC =sum(ac2_all_maf$gene_conversion)
 GC_fisher=function(data){
   alln=data$alln
   gcn=data$gcn
-  fisher.test(matrix(c(gcn, alln-gcn,allGC-gcn, allmut-alln-allGC+gcn),nrow=2),
-              alternative = "g")$p.value
+  gcrate_p=fisher.test(matrix(c(gcn, alln-gcn,allGC-gcn, allmut-alln-allGC+gcn),nrow=2),
+                       alternative = "g")$p.value
+  damage_p=fisher.test(matrix(c(data$gcn_damaging,data$alln_damaging-data$gcn_damaging,
+                                data$gcn_nondamaging,data$alln_nondamaging-data$gcn_nondamaging),nrow=2),
+                       alternative = "g")$p.value
+  return(tibble(gcrate_p=gcrate_p,damage_p=damage_p))
 }
 # by gene
-gcrate_gene=ac2_all_maf%>>%#filter(impact!="MODIFIER")%>>%
-  group_by(gene)%>>%summarise(gcn=sum(gene_conversion),alln=n())%>>%
-  ungroup()%>>%nest(data=c(gcn,alln))%>>%
+gcrate_gene=
+  ac2_all_maf%>>%mutate(mutype=ifelse((impact=="HIGH")|(impact=="LOW"),"damaging","nondamaging"))%>>%
+  group_by(gene,mutype)%>>%summarise(gcn=sum(gene_conversion),alln=n())%>>%ungroup()%>>%
+  tidyr::pivot_wider(names_from = c("mutype"),values_from = c(gcn,alln))%>>%
+  tidyr::replace_na(list(gcn_damaging=0,gcn_nondamaging=0,alln_damaging=0,alln_nondamaging=0))%>>%
+  mutate(gcn=gcn_damaging+gcn_nondamaging,alln=alln_damaging+alln_nondamaging)%>>%
+  mutate(gcrate_damaging=gcn_damaging/alln_damaging,gcrate_nondamaging=gcn_nondamaging/alln_nondamaging)%>>%
+  ungroup()%>>%nest(data=c(gcn,alln,gcn_damaging,alln_damaging,gcn_nondamaging,alln_nondamaging))%>>%
   mutate(fisher_p=purrr::map(data,~GC_fisher(.)))%>>%
   unnest(cols = c(data, fisher_p))
-gcrate_gene$FDR=p.adjust(gcrate_gene$fisher_p,"fdr")
+gcrate_gene$gcrate_FDR=p.adjust(gcrate_gene$gcrate_p,"fdr")
+gcrate_gene$damage_FDR=p.adjust(gcrate_gene$damage_p,"fdr")
 gcrate_gene%>>%arrange(FDR)%>>%filter(FDR<0.05)%>>%
   write_df("~/Dropbox/work/somatic_gene_conversion/revise/GCrate_gene.tsv")
 
@@ -307,7 +317,56 @@ prop.test(x=Xsq$ratio,n=Xsq$N,p=Xsq$expectation)
 #p=0.0009044
 
 
-
+#### TSG mutation in k(1,1) high (>90%) and low (<90%)
+make_tsg_mutation=function(prop11="large"){
+  if(prop11=="large"){
+    focal_sample=temp%>>%filter(prop_1_1>0.9)%>>%dplyr::select(patient_id)
+  }else{
+    focal_sample=temp%>>%filter(prop_1_1<0.9)%>>%dplyr::select(patient_id)
+  }
+all_maf %>>%
+  filter(mutect_dcv_posi/mutect_mut_num > 0.1, mutect_dcv_posi/mutect_mut_num < 0.9) %>>%
+  inner_join(sample_list%>>%filter(is.na(screening),purity>purity_cutoff)%>>%
+               dplyr::select(tumor_sample_id,purity),by=c("sample_id"="tumor_sample_id"))%>>%
+  mutate(genotype=ifelse(ascat_major==2,"AA",ifelse(ascat_minor==1,"AB","A"))) %>>%filter(genotype=="AB")%>>%
+  left_join(driver_gene%>>%filter(str_detect(role,"TSG"))%>>%mutate(role="TSG")) %>>%
+  mutate(role=ifelse(is.na(role),"non TSG","TSG  "))%>>%
+  mutate(role=factor(role,levels=c("TSG  ","non TSG")))%>>%
+  filter(impact=="MODERATE"|impact=="HIGH"|variant_classification=="Silent")%>>%
+  mutate(variant_type=ifelse(impact=="HIGH","Truncating",ifelse(variant_type=="SNP",
+                                                                ifelse(variant_classification=="Silent","Silent","Missense"),"inframe_indel"))) %>>%
+  mutate(variant_type=factor(variant_type,levels=c("Truncating","Missense","Silent","inframe_indel")))%>>%
+  filter(variant_type!="inframe_indel")%>>%
+  filter(allele_num<=2,allele_num>0)%>>% 
+  group_by(genotype,role,variant_type)%>>%mutate(bef=n())%>>%ungroup()%>>%
+  mutate(p=pbinom(t_depth-t_alt,t_depth,1-purity*0.5))%>>%
+  mutate(tVAF = t_alt / (t_depth * (purity*allele_num/(purity*allele_num+2*(1-purity)))))%>>%
+  filter((allele_num==2 & p<0.001)|(allele_num==1),tVAF>tvaf_cutoff)%>>%
+  inner_join(focal_sample)%>>%
+  count(genotype, role, variant_type,bef)%>>%mutate(ratio=n/bef)%>>%
+  mutate(low=qbinom(0.025,bef,ratio)/bef,up=qbinom(0.975,bef,ratio)/bef)%>>%(?.)%>>%
+  ggplot(aes(x=role,y=ratio,fill=role))+
+  geom_bar(stat="identity")+facet_wrap(.~ variant_type,strip.position = "bottom")+
+  geom_errorbar(aes(ymin=low,ymax=up),width=0.2)+
+  #geom_signif(data=trunc_tbl,aes(group=g),
+  #            xmin=1,xmax=2,y_position=0.023,annotations="**",textsize = 6)+
+  #geom_signif(data=misil_tbl,aes(group=g),
+  #            xmin=1,xmax=2,y_position=0.012,annotations="NS",textsize = 6)+
+  theme_classic()+
+  ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
+  #scale_y_continuous(limits = c(0,0.0245),expand = c(0,0))+
+  theme(axis.title.x = element_blank(),axis.title.y=element_text(size=24),
+        legend.position = c(0.5,1),legend.justification = c(0.5,1),
+        legend.direction = "horizontal",
+        legend.title = element_blank(),legend.text = element_text(size=20),
+        axis.text.x = element_blank(),axis.text.y = element_text(size=18,color="black"),
+        axis.ticks.x = element_blank(),strip.placement = "outside",
+        strip.background = element_blank(),strip.text.x = element_text(size=20))
+}
+make_tsg_mutation()
+ggsave("revise2/large_prop11_tsg_mutation.pdf",height = 6,width = 8)
+make_tsg_mutation(prop11 = "low")
+ggsave("revise2/low_prop11_tsg_mutation.pdf",height = 6,width = 8)
 
 ########################################################################
 # chromothripsis
@@ -348,61 +407,3 @@ ggsave("revise/breakpoint_gcrate.pdf")
 
 
 
-################################### mutation signature #########################################
-mutsig=read_tsv("~/Dropbox/work/somatic_gene_conversion/revise/all_pass_SBS.tsv.gz")
-mutsig=mutsig %>>%
-  filter(genotype=="AB")%>>%
-  inner_join(ac2_all_maf%>>%dplyr::select(sample_id,chr,start,ref,alt,gene_conversion))
-sbs_rank=c("C>A","C>G","C>T","T>A","T>C","T>G")
-compo_rank=c("A-A","A-C","A-G","A-T","C-A","C-C","C-G","C-T",
-             "G-A","G-C","G-G","G-T","T-A","T-C","T-G","T-T")
-mutsig_signif=mutsig %>>%
-  mutate(SBS=paste0(sbs_ref,">",sbs_alt))%>>%
-  mutate(SBS=factor(SBS,levels=sbs_rank))%>>%
-  mutate(Components=paste0(str_sub(sbs_pattern,1,1),"-",str_sub(sbs_pattern,3,3)))%>>%
-  mutate(Components=factor(Components,levels=compo_rank))%>>%
-  group_by(SBS,Components)%>>%
-  summarise(gcn=sum(gene_conversion),alln=n(),ratio=sum(gene_conversion)/n())%>>%
-  nest(data=c(gcn,alln))%>>%
-  mutate(fisher_p=purrr::map(data,~GC_fisher(.)))%>>%
-  unnest(cols = c(data, fisher_p))
-mutsig_signif$FDR=p.adjust(mutsig_signif$fisher_p,"fdr")
-mutsig_signif%>>%
-  ggplot(aes(x=Components,y=ratio,fill=SBS))+
-  geom_bar(stat="identity")+
-  facet_grid(.~SBS)+
-  scale_y_continuous(limits = c(0,0.0085),expand = c(0,0))+
-  scale_fill_manual(values=c(`C>A`="cyan",`C>G`="black",`C>T`="red",
-                             `T>A`="grey",`T>C`="green",`T>G`="pink"))+
-  geom_text(data=tibble(lab="*",SBS=factor("C>T",levels=sbs_rank)),
-            aes(x="T-G",y=0.007,label=lab),size=12)+
-  ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
-  theme_classic()+
-  theme(axis.title=element_text(size=24),legend.position = "none",
-        axis.text.y = element_text(size=16,color="black"),
-        axis.text.x = element_text(angle = 90,size=6,vjust = 0.5, hjust=1),
-        strip.placement = "outside",strip.text.x = element_text(size=20))
-ggsave("~/Dropbox/work/somatic_gene_conversion/revise/GCrate_signature.pdf",width=12,height = 4)
-## TCG>T is significantly high GC rate
-## SBS10b (POLE exonuclease domain mutation) is most assosiated with TCG>T
-## check PLOE mutation and GC rate
-POLEmut=all_maf%>>%
-  group_by(patient_id)%>>%mutate(mutnum=n())%>>%
-  filter(gene=="POLE",(impact=="HIGH"))%>>%
-  #filter(gene=="POLE",start==132676598)%>>%
-  count(patient_id,mutnum)%>>%dplyr::select(-n)%>>%
-  mutate(polemut="mut")
-
-ac2_all_maf%>>%left_join(POLEmut)%>>%mutate(polemut=ifelse(is.na(polemut),"Others","Truncating"))%>>%
-  #group_by(patient_id)%>>%summarise(gc=sum(gene_conversion),n=n(),polemut=first(polemut))%>>%View
-  group_by(polemut)%>>%summarise(GCrate=sum(gene_conversion)/n())%>>%
-  mutate(polemut=factor(polemut,levels = c("Truncating","Others")))%>>%
-  ggplot(aes(x=polemut,y=GCrate))+
-  geom_bar(stat="identity",fill="#e41a1c")+
-  scale_y_continuous(limits = c(0,0.0065),expand = c(0,0))+
-  theme_classic()+xlab("POLE mutation")+
-  ylab(expression(paste("Proportion of ",{SM["LOH,Conv"]},sep="")))+
-  theme(axis.title.x=element_text(size=24),axis.title.y=element_text(size=22),
-        axis.text.y = element_text(size=16,color="black"),
-        axis.text.x = element_text(size=20,color="black"))
-ggsave("~/Dropbox/work/somatic_gene_conversion/revise/GCrate_POLE.pdf",width=5,height = 5)
